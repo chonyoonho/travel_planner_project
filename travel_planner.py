@@ -148,43 +148,65 @@ def validate_recommendation(data: dict[str, Any]) -> dict[str, Any]:
 
 def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
     """Google Gemini API를 권장되는 Chat API 경로로 호출합니다."""
-    try:
-        client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
-        prompt_parts = []
-        for message in messages:
-            role = message.get("role", "user")
-            content = message.get("content", "")
-            if role == "system":
-                prompt_parts.append(f"[SYSTEM]\n{content}")
-            else:
-                prompt_parts.append(f"[USER]\n{content}")
+    prompt_parts = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        if role == "system":
+            prompt_parts.append(f"[SYSTEM]\n{content}")
+        else:
+            prompt_parts.append(f"[USER]\n{content}")
 
-        prompt = "\n\n".join(prompt_parts)
+    prompt = "\n\n".join(prompt_parts)
 
-        config = None
-        if json_mode:
-            config = types.GenerateContentConfig(response_mime_type="application/json")
+    config = None
+    if json_mode:
+        config = types.GenerateContentConfig(response_mime_type="application/json")
 
-        chat = client.chats.create(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-            config=config,
-        )
-        response = chat.send_message(prompt)
+    preferred_models = []
+    configured = os.getenv("GEMINI_MODEL", "").strip()
+    if configured:
+        preferred_models.append(configured)
+    preferred_models.extend([
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+    ])
 
-        text = getattr(response, "text", None)
-        if not text:
-            raise RuntimeError("Gemini API 응답이 비어 있습니다.")
+    # 모델이 새 계정에서 비활성화된 경우를 대비해 순차적으로 폴백합니다.
+    seen = set()
+    last_exc: Exception | None = None
+    for model_name in preferred_models:
+        if not model_name or model_name in seen:
+            continue
+        seen.add(model_name)
 
-        return text
+        try:
+            chat = client.chats.create(
+                model=model_name,
+                config=config,
+            )
+            response = chat.send_message(prompt)
+            text = getattr(response, "text", None)
+            if not text:
+                raise RuntimeError("Gemini API 응답이 비어 있습니다.")
+            return text
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc)
+            if "401" in msg or "403" in msg or "UNAUTHENTICATED" in msg:
+                raise RuntimeError("AUTH_ERROR: Gemini API 키 또는 권한을 확인하세요.") from exc
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                raise RuntimeError("QUOTA_OR_RATE_LIMIT: Gemini API 사용량 한도를 확인하세요.") from exc
+            # 404/NOT_FOUND이면 다른 모델 후보를 하나 더 시도합니다.
+            if "404" not in msg and "NOT_FOUND" not in msg:
+                raise RuntimeError(f"GEMINI_API_ERROR: {msg[:500]}") from exc
 
-    except Exception as exc:
-        msg = str(exc)
-        if "401" in msg or "403" in msg or "UNAUTHENTICATED" in msg:
-            raise RuntimeError("AUTH_ERROR: Gemini API 키 또는 권한을 확인하세요.") from exc
-        if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-            raise RuntimeError("QUOTA_OR_RATE_LIMIT: Gemini API 사용량 한도를 확인하세요.") from exc
-        raise RuntimeError(f"GEMINI_API_ERROR: {msg[:500]}") from exc
+    if last_exc is not None:
+        raise RuntimeError(f"GEMINI_API_ERROR: {str(last_exc)[:500]}") from last_exc
+    raise RuntimeError("GEMINI_API_ERROR: 사용 가능한 Gemini 모델을 찾지 못했습니다.")
 
 def make_first_prompt(date: str) -> list[dict[str, str]]:
     return [
