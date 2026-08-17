@@ -21,7 +21,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+gemini_URL = "https://api.gemini.com/v1/chat/completions"
 KAKAO_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 TIMEOUT = 30
 
@@ -129,7 +129,7 @@ def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = 
         payload["response_format"] = {"type": "json_object"}
 
     response = requests.post(
-        OPENAI_URL,
+        gemini_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -189,7 +189,7 @@ def make_first_prompt(date: str) -> list[dict[str, str]]:
 def get_first_recommendation(api_key: str, date: str, errors: list[dict[str, str]]) -> dict[str, Any]:
     messages = make_first_prompt(date)
     try:
-        raw = openai_chat(api_key, messages, json_mode=True)
+        raw = gemini_chat(api_key, messages, json_mode=True)
         return validate_recommendation(extract_json_text(raw))
     except Exception as first_exc:
         add_error(errors, "llm_recommendation", "JSON_PARSE_OR_API_ERROR", str(first_exc))
@@ -205,7 +205,7 @@ def get_first_recommendation(api_key: str, date: str, errors: list[dict[str, str
             ),
         }]
         try:
-            raw = openai_chat(api_key, retry_messages, json_mode=True)
+            raw = gemini_chat(api_key, retry_messages, json_mode=True)
             return validate_recommendation(extract_json_text(raw))
         except Exception as second_exc:
             add_error(errors, "llm_recommendation", "RETRY_FAILED", str(second_exc))
@@ -321,7 +321,7 @@ def generate_report(
     restaurants: list[dict[str, Any]],
     errors: list[dict[str, str]],
 ) -> str:
-    raw = openai_chat(
+    raw = gemini_chat(
         api_key,
         make_report_prompt(date, recommendation, restaurants, errors),
         json_mode=False,
@@ -360,17 +360,17 @@ def save_results(
 def main() -> None:
     load_dotenv()
     args = parse_args()
-    openai_key, kakao_key = require_api_keys()
+    gemini_key, kakao_key = require_api_keys()
 
     errors: list[dict[str, str]] = []
 
     log(f"여행 추천 프로그램 시작: {args.date}")
 
     log("\n[1/3] 1차 추천 생성 중(LLM)...")
-    recommendation = get_first_recommendation(openai_key, args.date, errors)
+    recommendation = get_first_recommendation(gemini_key, args.date, errors)
     log(f'  - recommended_city: "{recommendation["recommended_city"]}"')
 
-    log("\n[2/3] 맛집 검색 중(지도/장소 API)...")
+    log("\n[2/3] 맛집 검색 중(지도/장소 API)...)
     restaurants = search_restaurants(
         kakao_key,
         recommendation["recommended_city"],
@@ -385,7 +385,7 @@ def main() -> None:
     log("\n[3/3] 최종 리포트 생성 중(LLM)...")
     try:
         report = generate_report(
-            openai_key,
+            gemini_key,
             args.date,
             recommendation,
             restaurants,
