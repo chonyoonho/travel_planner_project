@@ -132,12 +132,12 @@ def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = 
 
         prompt = "\n\n".join(prompt_parts)
 
-        config_kwargs = {"temperature": 0.3}
+        config_kwargs = {}
         if json_mode:
             config_kwargs["response_mime_type"] = "application/json"
 
         response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
             contents=prompt,
             config=types.GenerateContentConfig(**config_kwargs),
         )
