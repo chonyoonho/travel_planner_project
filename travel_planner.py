@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CLI 기반 국내 여행 추천 시스템
-- LLM: OpenAI Chat Completions API
+- LLM: GEMINI Chat Completions API
 - 장소 검색: Kakao Local Keyword Search API
 - 입력: --date / -date "YYYY-MM-DD"
 """
@@ -59,26 +59,26 @@ def parse_args() -> argparse.Namespace:
 
 
 def require_api_keys() -> tuple[str, str]:
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     kakao_key = os.getenv("KAKAO_REST_API_KEY", "").strip()
 
     missing = []
-    if not openai_key:
-        missing.append("OPENAI_API_KEY")
+    if not gemini_key:
+        missing.append("GEMINI_API_KEY")
     if not kakao_key:
         missing.append("KAKAO_REST_API_KEY")
 
     if missing:
         log("오류: API 키가 설정되지 않았습니다.")
         log("필수 키: " + ", ".join(missing))
-        log("macOS/Linux: export OPENAI_API_KEY=\"YOUR_KEY\"")
+        log("macOS/Linux: export GEMINI_API_KEY=\"YOUR_KEY\"")
         log("macOS/Linux: export KAKAO_REST_API_KEY=\"YOUR_KEY\"")
-        log("Windows PowerShell: $env:OPENAI_API_KEY=\"YOUR_KEY\"")
+        log("Windows PowerShell: $env:GEMINI_API_KEY=\"YOUR_KEY\"")
         log("Windows PowerShell: $env:KAKAO_REST_API_KEY=\"YOUR_KEY\"")
         log("또는 .env 파일에 키를 설정한 뒤 다시 실행하세요.")
         sys.exit(1)
 
-    return openai_key, kakao_key
+    return gemini_key, kakao_key
 
 
 def extract_json_text(text: str) -> dict[str, Any]:
