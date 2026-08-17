@@ -370,7 +370,7 @@ def main() -> None:
     recommendation = get_first_recommendation(gemini_key, args.date, errors)
     log(f'  - recommended_city: "{recommendation["recommended_city"]}"')
 
-    log("\n[2/3] 맛집 검색 중(지도/장소 API)...)
+    log("\n[2/3] 맛집 검색 중(지도/장소 API)...')
     restaurants = search_restaurants(
         kakao_key,
         recommendation["recommended_city"],
