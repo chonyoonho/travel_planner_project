@@ -10,11 +10,14 @@ import argparse
 import json
 import os
 import sys
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import requests
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 
@@ -115,8 +118,8 @@ def validate_recommendation(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def openai_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
+    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
