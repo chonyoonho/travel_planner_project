@@ -83,45 +83,15 @@ def require_api_keys() -> tuple[str, str]:
 
 
 def extract_json_text(text: str) -> dict[str, Any]:
-    """LLM이 JSON 외의 설명/코드블록을 붙였을 때 첫 유효 JSON 객체만 추출한다."""
-    if not isinstance(text, str):
-        raise TypeError("JSON 추출 대상은 문자열이어야 합니다.")
-
-    normalized = text.strip()
-    if not normalized:
-        raise ValueError("빈 JSON 응답입니다.")
-
-    # ```json ... ``` 또는 ``` ... ``` 형태까지 정리
-    if normalized.startswith("```"):
-        normalized = normalized.strip("`")
-        if "\n" in normalized:
-            lines = normalized.splitlines()
-            if lines and lines[0].strip().lower() in {"json", "javascript"}:
-                normalized = "\n".join(lines[1:])
-        normalized = normalized.strip()
-
+    """LLM이 JSON 외의 설명을 붙였을 때도 가장 바깥 JSON 객체를 추출한다."""
+    text = text.strip()
     try:
-        return json.loads(normalized)
+        return json.loads(text)
     except json.JSONDecodeError:
-        start = normalized.find("{")
-        if start == -1:
-            raise
-
-        decoder = json.JSONDecoder()
-        for idx in range(start, len(normalized)):
-            candidate = normalized[idx:]
-            try:
-                value, end_index = decoder.raw_decode(candidate)
-                if isinstance(value, dict):
-                    return value
-            except json.JSONDecodeError:
-                continue
-
-        # 마지막 수단: 첫 '{'부터 마지막 '}' 사이만 잘라서 파싱 시도
-        end = normalized.rfind("}")
-        if end > start:
-            return json.loads(normalized[start:end + 1])
-
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(text[start:end + 1])
         raise
 
 
@@ -147,66 +117,43 @@ def validate_recommendation(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
-    """Google Gemini API를 권장되는 Chat API 경로로 호출합니다."""
-    client = genai.Client(api_key=api_key)
+    """Google Gemini API를 공식 google-genai SDK로 호출합니다."""
+    try:
+        client = genai.Client(api_key=api_key)
 
-    prompt_parts = []
-    for message in messages:
-        role = message.get("role", "user")
-        content = message.get("content", "")
-        if role == "system":
-            prompt_parts.append(f"[SYSTEM]\n{content}")
-        else:
-            prompt_parts.append(f"[USER]\n{content}")
+        prompt_parts = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "system":
+                prompt_parts.append(f"[SYSTEM]\n{content}")
+            else:
+                prompt_parts.append(f"[USER]\n{content}")
 
-    prompt = "\n\n".join(prompt_parts)
+        prompt = "\n\n".join(prompt_parts)
 
-    config = None
-    if json_mode:
-        config = types.GenerateContentConfig(response_mime_type="application/json")
+        config_kwargs = {}
+        if json_mode:
+            config_kwargs["response_mime_type"] = "application/json"
 
-    preferred_models = []
-    configured = os.getenv("GEMINI_MODEL", "").strip()
-    if configured:
-        preferred_models.append(configured)
-    preferred_models.extend([
-        "gemini-flash-latest",
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash-preview",
-    ])
+        response = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
 
-    # 모델이 새 계정에서 비활성화된 경우를 대비해 순차적으로 폴백합니다.
-    seen = set()
-    last_exc: Exception | None = None
-    for model_name in preferred_models:
-        if not model_name or model_name in seen:
-            continue
-        seen.add(model_name)
+        if not response.text:
+            raise RuntimeError("Gemini API 응답이 비어 있습니다.")
 
-        try:
-            chat = client.chats.create(
-                model=model_name,
-                config=config,
-            )
-            response = chat.send_message(prompt)
-            text = getattr(response, "text", None)
-            if not text:
-                raise RuntimeError("Gemini API 응답이 비어 있습니다.")
-            return text
-        except Exception as exc:
-            last_exc = exc
-            msg = str(exc)
-            if "401" in msg or "403" in msg or "UNAUTHENTICATED" in msg:
-                raise RuntimeError("AUTH_ERROR: Gemini API 키 또는 권한을 확인하세요.") from exc
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                raise RuntimeError("QUOTA_OR_RATE_LIMIT: Gemini API 사용량 한도를 확인하세요.") from exc
-            # 404/NOT_FOUND이면 다른 모델 후보를 하나 더 시도합니다.
-            if "404" not in msg and "NOT_FOUND" not in msg:
-                raise RuntimeError(f"GEMINI_API_ERROR: {msg[:500]}") from exc
+        return response.text
 
-    if last_exc is not None:
-        raise RuntimeError(f"GEMINI_API_ERROR: {str(last_exc)[:500]}") from last_exc
-    raise RuntimeError("GEMINI_API_ERROR: 사용 가능한 Gemini 모델을 찾지 못했습니다.")
+    except Exception as exc:
+        msg = str(exc)
+        if "401" in msg or "403" in msg or "UNAUTHENTICATED" in msg:
+            raise RuntimeError("AUTH_ERROR: Gemini API 키 또는 권한을 확인하세요.") from exc
+        if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            raise RuntimeError("QUOTA_OR_RATE_LIMIT: Gemini API 사용량 한도를 확인하세요.") from exc
+        raise RuntimeError(f"GEMINI_API_ERROR: {msg[:500]}") from exc
 
 def make_first_prompt(date: str) -> list[dict[str, str]]:
     return [
