@@ -83,15 +83,45 @@ def require_api_keys() -> tuple[str, str]:
 
 
 def extract_json_text(text: str) -> dict[str, Any]:
-    """LLM이 JSON 외의 설명을 붙였을 때도 가장 바깥 JSON 객체를 추출한다."""
-    text = text.strip()
+    """LLM이 JSON 외의 설명/코드블록을 붙였을 때 첫 유효 JSON 객체만 추출한다."""
+    if not isinstance(text, str):
+        raise TypeError("JSON 추출 대상은 문자열이어야 합니다.")
+
+    normalized = text.strip()
+    if not normalized:
+        raise ValueError("빈 JSON 응답입니다.")
+
+    # ```json ... ``` 또는 ``` ... ``` 형태까지 정리
+    if normalized.startswith("```"):
+        normalized = normalized.strip("`")
+        if "\n" in normalized:
+            lines = normalized.splitlines()
+            if lines and lines[0].strip().lower() in {"json", "javascript"}:
+                normalized = "\n".join(lines[1:])
+        normalized = normalized.strip()
+
     try:
-        return json.loads(text)
+        return json.loads(normalized)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+        start = normalized.find("{")
+        if start == -1:
+            raise
+
+        decoder = json.JSONDecoder()
+        for idx in range(start, len(normalized)):
+            candidate = normalized[idx:]
+            try:
+                value, end_index = decoder.raw_decode(candidate)
+                if isinstance(value, dict):
+                    return value
+            except json.JSONDecodeError:
+                continue
+
+        # 마지막 수단: 첫 '{'부터 마지막 '}' 사이만 잘라서 파싱 시도
+        end = normalized.rfind("}")
+        if end > start:
+            return json.loads(normalized[start:end + 1])
+
         raise
 
 
@@ -117,7 +147,7 @@ def validate_recommendation(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
-    """Google Gemini API를 공식 google-genai SDK로 호출합니다."""
+    """Google Gemini API를 권장되는 Chat API 경로로 호출합니다."""
     try:
         client = genai.Client(api_key=api_key)
 
@@ -132,20 +162,21 @@ def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = 
 
         prompt = "\n\n".join(prompt_parts)
 
-        config_kwargs = {}
+        config = None
         if json_mode:
-            config_kwargs["response_mime_type"] = "application/json"
+            config = types.GenerateContentConfig(response_mime_type="application/json")
 
-        response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-            contents=prompt,
-            config=types.GenerateContentConfig(**config_kwargs),
+        chat = client.chats.create(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            config=config,
         )
+        response = chat.send_message(prompt)
 
-        if not response.text:
+        text = getattr(response, "text", None)
+        if not text:
             raise RuntimeError("Gemini API 응답이 비어 있습니다.")
 
-        return response.text
+        return text
 
     except Exception as exc:
         msg = str(exc)
