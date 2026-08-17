@@ -20,8 +20,6 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-
-gemini_URL = "https://api.gemini.com/v1/chat/completions"
 KAKAO_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 TIMEOUT = 30
 
@@ -119,37 +117,43 @@ def validate_recommendation(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def gemini_chat(api_key: str, messages: list[dict[str, str]], json_mode: bool = False) -> str:
-    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.3,
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-
-    response = requests.post(
-        gemini_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=TIMEOUT,
-    )
-
-    if response.status_code in (401, 403):
-        raise RuntimeError(f"AUTH_ERROR HTTP {response.status_code}")
-    if response.status_code == 429:
-        raise RuntimeError("QUOTA_OR_RATE_LIMIT HTTP 429")
-    response.raise_for_status()
-
-    body = response.json()
+    """Google Gemini API를 공식 google-genai SDK로 호출합니다."""
     try:
-        return body["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError("LLM 응답 구조를 해석할 수 없습니다.") from exc
+        client = genai.Client(api_key=api_key)
 
+        prompt_parts = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "system":
+                prompt_parts.append(f"[SYSTEM]\n{content}")
+            else:
+                prompt_parts.append(f"[USER]\n{content}")
+
+        prompt = "\n\n".join(prompt_parts)
+
+        config_kwargs = {"temperature": 0.3}
+        if json_mode:
+            config_kwargs["response_mime_type"] = "application/json"
+
+        response = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+
+        if not response.text:
+            raise RuntimeError("Gemini API 응답이 비어 있습니다.")
+
+        return response.text
+
+    except Exception as exc:
+        msg = str(exc)
+        if "401" in msg or "403" in msg or "UNAUTHENTICATED" in msg:
+            raise RuntimeError("AUTH_ERROR: Gemini API 키 또는 권한을 확인하세요.") from exc
+        if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            raise RuntimeError("QUOTA_OR_RATE_LIMIT: Gemini API 사용량 한도를 확인하세요.") from exc
+        raise RuntimeError(f"GEMINI_API_ERROR: {msg[:500]}") from exc
 
 def make_first_prompt(date: str) -> list[dict[str, str]]:
     return [
@@ -370,7 +374,7 @@ def main() -> None:
     recommendation = get_first_recommendation(gemini_key, args.date, errors)
     log(f'  - recommended_city: "{recommendation["recommended_city"]}"')
 
-    log("\n[2/3] 맛집 검색 중(지도/장소 API)...')
+    log("\n[2/3] 맛집 검색 중(지도/장소 API)...")
     restaurants = search_restaurants(
         kakao_key,
         recommendation["recommended_city"],
